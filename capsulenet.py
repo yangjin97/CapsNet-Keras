@@ -20,6 +20,7 @@ from keras import layers, models, optimizers
 from keras import backend as K
 from keras.utils import to_categorical
 from capsulelayers import CapsuleLayer, PrimaryCap, Length, Mask
+from random import randint
 
 K.set_image_data_format('channels_last')
 
@@ -34,18 +35,30 @@ def CapsNet(input_shape, n_class, num_routing):
     """
     x = layers.Input(shape=input_shape)
 
-    # Layer 1: Just a conventional Conv2D layer
-    conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
+    out_list = []
+    for i in range(7):
+        # x = Crop()(x)
+        idx = randint(0,8)
+        idy = randint(0,8)
+        layers.Cropping2D(cropping=((idx, idx+24), (idy, idy+24)))(x)
 
-    # Layer 2: Conv2D layer with `squash` activation, then reshape to [None, num_capsule, dim_vector]
-    primarycaps = PrimaryCap(conv1, dim_vector=8, n_channels=32, kernel_size=9, strides=2, padding='valid')
+        # Layer 1: Just a conventional Conv2D layer
+        conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu')(x)
+        # conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
 
-    # Layer 3: Capsule layer. Routing algorithm works here.
-    digitcaps = CapsuleLayer(num_capsule=n_class, dim_vector=16, num_routing=num_routing, name='digitcaps')(primarycaps)
+        # Layer 2: Conv2D layer with `squash` activation, then reshape to [None, num_capsule, dim_vector]
+        primarycaps = PrimaryCap(conv1, dim_vector=8, n_channels=32, kernel_size=9, strides=2, padding='valid')
 
-    # Layer 4: This is an auxiliary layer to replace each capsule with its length. Just to match the true label's shape.
-    # If using tensorflow, this will not be necessary. :)
-    out_caps = Length(name='capsnet')(digitcaps)
+        # Layer 3: Capsule layer. Routing algorithm works here.
+        # digitcaps = CapsuleLayer(num_capsule=n_class, dim_vector=16, num_routing=num_routing, name='digitcaps')(primarycaps)
+        digitcaps = CapsuleLayer(num_capsule=n_class, dim_vector=16, num_routing=num_routing)(primarycaps)
+
+        # Layer 4: This is an auxiliary layer to replace each capsule with its length. Just to match the true label's shape.
+        # If using tensorflow, this will not be necessary. :)
+        # out_list.append(Length(name='capsnet')(digitcaps))
+        out_list.append(Length()(digitcaps))
+
+    out_caps = layers.Average(name='capsnet')(out_list)
 
     # Decoder network.
     y = layers.Input(shape=(n_class,))
@@ -166,6 +179,26 @@ def load_mnist():
     y_test = to_categorical(y_test.astype('float32'))
     return (x_train, y_train), (x_test, y_test)
 
+def load_cifar10():
+    # the data, shuffled and split between train and test sets
+    from keras.datasets import cifar10
+    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    # x_train = x_train[:1000]
+    # y_train = y_train[:1000]
+
+    # print x_train.shape
+    # x_train = x_train.dot([0.299, 0.587, 0.114])
+    # x_test = x_test.dot([0.299, 0.587, 0.114])
+
+    x_train = x_train.reshape(-1, 32, 32, 3).astype('float32') / 255.
+    x_test = x_test.reshape(-1, 32, 32, 3).astype('float32') / 255.
+    # y_train = to_categorical(y_train.astype('float32'))
+    # y_test = to_categorical(y_test.astype('float32'))
+
+    y_train = to_categorical(y_train.astype('float32'), num_classes=11)
+    y_test = to_categorical(y_test.astype('float32'), num_classes=11)
+
+    return (x_train, y_train), (x_test, y_test)
 
 if __name__ == "__main__":
     import numpy as np
@@ -179,7 +212,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--epochs', default=50, type=int)
-    parser.add_argument('--lam_recon', default=0.392, type=float)  # 784 * 0.0005, paper uses sum of SE, here uses MSE
+    parser.add_argument('--lam_recon', default=1.536, type=float)  # 784 * 0.0005, paper uses sum of SE, here uses MSE
     parser.add_argument('--num_routing', default=3, type=int)  # num_routing should > 0
     parser.add_argument('--shift_fraction', default=0.1, type=float)
     parser.add_argument('--debug', default=0, type=int)  # debug>0 will save weights by TensorBoard
@@ -193,11 +226,12 @@ if __name__ == "__main__":
         os.makedirs(args.save_dir)
 
     # load data
-    (x_train, y_train), (x_test, y_test) = load_mnist()
+    # (x_train, y_train), (x_test, y_test) = load_mnist()
+    (x_train, y_train), (x_test, y_test) = load_cifar10()
 
     # define model
     model, eval_model = CapsNet(input_shape=x_train.shape[1:],
-                                n_class=len(np.unique(np.argmax(y_train, 1))),
+                                n_class=len(np.unique(np.argmax(y_train, 1)))+1,
                                 num_routing=args.num_routing)
     model.summary()
     plot_model(model, to_file=args.save_dir+'/model.png', show_shapes=True)

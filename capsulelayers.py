@@ -10,7 +10,16 @@ Author: Xifeng Guo, E-mail: `guoxifeng1990@163.com`, Github: `https://github.com
 import keras.backend as K
 import tensorflow as tf
 from keras import initializers, layers
+from random import randint
 
+# class Crop(layers.Layer):
+    # def call(self, inputs, **kwargs):
+        # x = randint(0, 8)
+        # y = randint(0, 8)
+        # return inputs[:, x:x+24, y:y+24]
+
+    # def compute_output_shape(self, input_shape):
+        # return tuple([input_shape[0], 24, 24])
 
 class Length(layers.Layer):
     """
@@ -60,6 +69,7 @@ def squash(vectors, axis=-1):
     """
     s_squared_norm = K.sum(K.square(vectors), axis, keepdims=True)
     scale = s_squared_norm / (1 + s_squared_norm) / K.sqrt(s_squared_norm + K.epsilon())
+    # scale = (1 - K.exp(-s_squared_norm)) / K.sqrt(s_squared_norm + K.epsilon())
     return scale * vectors
 
 
@@ -176,10 +186,12 @@ def PrimaryCap(inputs, dim_vector, n_channels, kernel_size, strides, padding):
     :param n_channels: the number of types of capsules
     :return: output tensor, shape=[None, num_capsule, dim_vector]
     """
-    output = layers.Conv2D(filters=dim_vector*n_channels, kernel_size=kernel_size, strides=strides, padding=padding,
-                           name='primarycap_conv2d')(inputs)
-    outputs = layers.Reshape(target_shape=[-1, dim_vector], name='primarycap_reshape')(output)
-    return layers.Lambda(squash, name='primarycap_squash')(outputs)
+    output = layers.Conv2D(filters=dim_vector*n_channels, kernel_size=kernel_size, strides=strides, padding=padding)(inputs)
+                           # name='primarycap_conv2d')(inputs)
+    # outputs = layers.Reshape(target_shape=[-1, dim_vector], name='primarycap_reshape')(output)
+    outputs = layers.Reshape(target_shape=[-1, dim_vector])(output)
+    # return layers.Lambda(squash, name='primarycap_squash')(outputs)
+    return layers.Lambda(squash)(outputs)
 
 
 """
