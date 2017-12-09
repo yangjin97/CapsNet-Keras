@@ -34,9 +34,12 @@ def CapsNet(input_shape, n_class, num_routing):
     :return: A Keras Model with 2 inputs and 2 outputs
     """
     x = layers.Input(shape=input_shape)
+    y = layers.Input(shape=(n_class,))
 
     out_list = []
-    for i in range(7):
+    decoder_y_list = []
+    decoder_list = []
+    for i in range(args.ensemble):
         # x = Crop()(x)
         idx = randint(0,8)
         idy = randint(0,8)
@@ -58,23 +61,43 @@ def CapsNet(input_shape, n_class, num_routing):
         # out_list.append(Length(name='capsnet')(digitcaps))
         out_list.append(Length()(digitcaps))
 
-    out_caps = layers.Average(name='capsnet')(out_list)
+        # Decoder network.
+        masked_by_y = Mask()([digitcaps, y])  # The true label is used to mask the output of capsule layer. For training
+        masked = Mask()(digitcaps)  # Mask using the capsule with maximal length. For prediction
 
-    # Decoder network.
-    y = layers.Input(shape=(n_class,))
-    masked_by_y = Mask()([digitcaps, y])  # The true label is used to mask the output of capsule layer. For training
-    masked = Mask()(digitcaps)  # Mask using the capsule with maximal length. For prediction
+        # Shared Decoder model in training and prediction
+        # decoder = models.Sequential(name='decoder')
+        decoder = models.Sequential()
+        decoder.add(layers.Dense(512, activation='relu', input_dim=16*n_class))
+        decoder.add(layers.Dense(1024, activation='relu'))
+        decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
+        decoder.add(layers.Reshape(target_shape=input_shape, name='out_recon'))
 
-    # Shared Decoder model in training and prediction
-    decoder = models.Sequential(name='decoder')
-    decoder.add(layers.Dense(512, activation='relu', input_dim=16*n_class))
-    decoder.add(layers.Dense(1024, activation='relu'))
-    decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
-    decoder.add(layers.Reshape(target_shape=input_shape, name='out_recon'))
+        decoder_y_list.append(decoder(masked_by_y))
+        decoder_list.append(decoder(masked))
+
+    loss_average = layers.Average(name='capsnet')(out_list)
+
+    # loss_sum = layers.Add()(out_list)
+
+    # decoder_y_sum = layers.Add()(decoder_y_list)
+    # decoder_sum = layers.Add()(decoder_list)
 
     # Models for training and evaluation (prediction)
-    train_model = models.Model([x, y], [out_caps, decoder(masked_by_y)])
-    eval_model = models.Model(x, [out_caps, decoder(masked)])
+    # train_model = models.Model([x, y], [out_caps, decoder(masked_by_y)])
+
+    # train_model = models.Model([x, y], [loss_average, decoder_y_sum])
+    # eval_model = models.Model(x, [loss_average, decoder_sum])
+
+    # train_model = models.Model([x, y], [loss_average]+out_list+decoder_y_list)
+    # eval_model = models.Model(x, [loss_average]+out_list+decoder_list)
+
+    train_model = models.Model([x, y], [loss_average]+out_list+decoder_y_list)
+    eval_model = models.Model(x, [loss_average]+out_list+decoder_list)
+
+    # train_model = models.Model([x, y], [loss_average, decoder(masked_by_y)])
+    # eval_model = models.Model(x, [loss_average, decoder(masked)])
+
     return train_model, eval_model
 
 
@@ -112,8 +135,10 @@ def train(model, data, args):
 
     # compile the model
     model.compile(optimizer=optimizers.Adam(lr=args.lr),
-                  loss=[margin_loss, 'mse'],
-                  loss_weights=[1., args.lam_recon],
+                  # loss=[margin_loss, 'mse'],
+                  loss=[margin_loss]*(args.ensemble+1)+['mse']*args.ensemble,
+                  # loss_weights=[2., args.lam_recon],
+                  loss_weights=[0.0]+[1.]*args.ensemble+[args.lam_recon]*args.ensemble,
                   metrics={'capsnet': 'accuracy'})
 
     """
@@ -129,13 +154,14 @@ def train(model, data, args):
         generator = train_datagen.flow(x, y, batch_size=batch_size)
         while 1:
             x_batch, y_batch = generator.next()
-            yield ([x_batch, y_batch], [y_batch, x_batch])
+            # yield ([x_batch, y_batch], [y_batch, x_batch])
+            yield ([x_batch, y_batch], [y_batch]*(args.ensemble+1)+[x_batch]*(args.ensemble))
 
     # Training with data augmentation. If shift_fraction=0., also no augmentation.
     model.fit_generator(generator=train_generator(x_train, y_train, args.batch_size, args.shift_fraction),
                         steps_per_epoch=int(y_train.shape[0] / args.batch_size),
                         epochs=args.epochs,
-                        validation_data=[[x_test, y_test], [y_test, x_test]],
+                        validation_data=[[x_test, y_test], [y_test]*(args.ensemble+1)+[x_test]*args.ensemble],
                         callbacks=[log, tb, checkpoint, lr_decay])
     # End: Training with data augmentation -----------------------------------------------------------------------#
 
@@ -220,6 +246,7 @@ if __name__ == "__main__":
     parser.add_argument('--is_training', default=1, type=int)
     parser.add_argument('--weights', default=None)
     parser.add_argument('--lr', default=0.001, type=float)
+    parser.add_argument('--ensemble', default=2, type=int)
     args = parser.parse_args()
     print(args)
     if not os.path.exists(args.save_dir):

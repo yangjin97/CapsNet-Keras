@@ -12,15 +12,6 @@ import tensorflow as tf
 from keras import initializers, layers
 from random import randint
 
-# class Crop(layers.Layer):
-    # def call(self, inputs, **kwargs):
-        # x = randint(0, 8)
-        # y = randint(0, 8)
-        # return inputs[:, x:x+24, y:y+24]
-
-    # def compute_output_shape(self, input_shape):
-        # return tuple([input_shape[0], 24, 24])
-
 class Length(layers.Layer):
     """
     Compute the length of vectors. This is used to compute a Tensor that has the same shape with y_true in margin_loss
